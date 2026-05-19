@@ -1,0 +1,17 @@
+[Unit]
+Description=WiFi Occupancy Streamlit Dashboard
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -m streamlit run /home/islab/wifi-occupancy/dashboard.py --server.port 8501 --server.address 0.0.0.0
+Restart=always
+RestartSec=10
+User=islab
+WorkingDirectory=/home/islab/wifi-occupancy
+Environment=PYTHONUNBUFFERED=1
+StandardOutput=append:/home/islab/wifi-occupancy/logs/dashboard.log
+StandardError=append:/home/islab/wifi-occupancy/logs/dashboard.log
+
+[Install]
+WantedBy=multi-user.target

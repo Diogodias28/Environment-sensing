@@ -1,0 +1,13 @@
+[Unit]
+Description=WiFi Channel Hopping for Probe Request Capture
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/home/islab/wifi-occupancy/channel-hop.sh
+Restart=always
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,18 @@
+[Unit]
+Description=WiFi Probe Request Capture (tshark)
+After=wifi-channel-hop.service
+Requires=wifi-channel-hop.service
+
+[Service]
+Type=simple
+# Garantir que o diretório existe com permissões certas
+ExecStartPre=/bin/bash -c 'mkdir -p /home/islab/wifi-occupancy/data/raw && chmod 777 /home/islab/wifi-occupancy/data/raw'
+ExecStart=/home/islab/wifi-occupancy/capture.sh
+Restart=always
+RestartSec=10
+User=root
+StandardOutput=append:/home/islab/wifi-occupancy/logs/capture.log
+StandardError=append:/home/islab/wifi-occupancy/logs/capture.log
+
+[Install]
+WantedBy=multi-user.target

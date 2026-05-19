@@ -1,0 +1,9 @@
+[Unit]
+Description=WiFi Occupancy Pipeline Processing
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/islab/wifi-occupancy/process.py
+User=islab
+StandardOutput=append:/home/islab/wifi-occupancy/logs/process.log
+StandardError=append:/home/islab/wifi-occupancy/logs/process.log
