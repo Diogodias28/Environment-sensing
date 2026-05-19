@@ -3,9 +3,12 @@
 # Usar quando nao queres esperar pelo boot
 
 echo "[1/4] Colocando wlan1 em modo monitor..."
-sudo ip link set wlan1 down 2>/dev/null
-sudo iw dev wlan1 set type monitor 2>/dev/null
-sudo ip link set wlan1 up 2>/dev/null
+if ! sudo ip link set wlan1 down; then
+    echo "  ERRO: wlan1 nao encontrado - verifica se o adaptador esta ligado!"
+    exit 1
+fi
+sudo iw dev wlan1 set type monitor
+sudo ip link set wlan1 up
 echo "  OK"
 
 echo "[2/4] Criando diretorios..."
