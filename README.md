@@ -5,3 +5,4 @@ Baseado em técnicas de passive WiFi sensing, o sistema captura e processa probe
 - `wifi-occupancy/` — captura, processamento e dashboard (Streamlit)
 - `SA2026_paper_8264.pdf` — paper submetido à SA2026
 - `uji_probes.pdf` — documento de referência (UJI probes dataset)
+- `demo.png` — mapeamento da sala
