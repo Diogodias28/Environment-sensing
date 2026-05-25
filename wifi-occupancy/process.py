@@ -14,20 +14,25 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 from sklearn.preprocessing import StandardScaler
-from sklearn.cluster import KMeans
+from sklearn.cluster import KMeans, OPTICS
 from sklearn.metrics import silhouette_score
 
 # ============================================================
 # CONFIG
 # ============================================================
-DATA_DIR = "/home/islab/wifi-occupancy/data"
+DATA_DIR = "/var/wifi-occupancy/data"
 RAW_DIR = os.path.join(DATA_DIR, "raw")
 DB_PATH = os.path.join(DATA_DIR, "db", "occupancy.db")
 MODEL_PATH = os.path.join(DATA_DIR, "model", "model_config.json")
 WINDOW_MINUTES = 15
 FEATURE_COLS = ['probe_count', 'unique_macs', 'rssi_mean',
                 'rssi_std', 'ssid_diversity', 'mac_randomization_ratio']
-
+# Filtros de proximidade
+RSSI_MIN_DBM     = -65      # descarta dispositivos fora da sala
+SSID_KNOWN       = {        # mantém probes destes SSIDs (adapta ao teu campus)
+    "eduroam"
+}
+SSID_KEEP_WILDCARD = True   # mantém sempre probes sem SSID (wildcard)
 os.makedirs(os.path.join(DATA_DIR, "db"), exist_ok=True)
 os.makedirs(os.path.join(DATA_DIR, "model"), exist_ok=True)
 
@@ -44,7 +49,7 @@ def extract_from_pcap(pcap_file):
         "-e", "wlan.sa",
         "-e", "radiotap.dbm_antsignal",
         "-e", "wlan.ssid",
-        "-E", "header=n", "-E", "separator=,", "-E", "quote=d",
+        "-E", "header=n", "-E", "separator=\t", "-E", "quote=d",
         "-Y", "wlan.fc.type_subtype == 0x04"
     ]
 
@@ -62,18 +67,19 @@ def extract_from_pcap(pcap_file):
     for line in lines:
         if not line.strip():
             continue
-        parts = line.split(",")
+        parts = line.split("\t")
         if len(parts) >= 4:
             try:
                 ts = float(parts[0].strip('"'))
                 mac = parts[1].strip('"')
-                rssi = float(parts[2].strip('"')) if parts[2].strip('"') else None
+                rssi_raw = parts[2].strip('"')
+                rssi = float(rssi_raw.split(',')[0]) if rssi_raw else None
                 ssid = parts[3].strip('"') if len(parts) > 3 else ""
                 data.append({
                     'timestamp': datetime.fromtimestamp(ts),
                     'mac': mac,
                     'rssi': rssi,
-                    'ssid': ssid if ssid else "Wildcard"
+                    'ssid': "Wildcard" if (not ssid or ssid == "<MISSING>") else ssid
                 })
             except:
                 continue
@@ -92,6 +98,58 @@ def anonymize_mac(mac):
     last3 = mac[9:]
     hashed = hashlib.sha512(last3.encode()).hexdigest()[:6]
     return f"{oui}{hashed}"
+
+def filter_probes(df):
+    """Remove probes de fora da sala por RSSI e SSID irrelevante."""
+    if df.empty:
+        return df
+
+    before = len(df)
+    print(f"  RSSI sample: {df['rssi'].head(5).tolist()}")
+    print(f"  RSSI not null: {df['rssi'].notna().sum()}")
+    print(f"  SSID sample: {df['ssid'].head(5).tolist()}")
+    after_rssi = df[df['rssi'].notna() & (df['rssi'] >= RSSI_MIN_DBM)]
+    print(f"  Após RSSI (-65): {len(after_rssi)}")
+    # 1. Filtro RSSI — descarta sinais fracos (dispositivos longe)
+    df = df[df['rssi'].notna() & (df['rssi'] >= RSSI_MIN_DBM)]
+
+    # 2. Filtro SSID — mantém wildcards + SSIDs institucionais conhecidos
+    if SSID_KNOWN:
+        ssid_lower = df['ssid'].str.lower()
+        known_lower = {s.lower() for s in SSID_KNOWN}
+        mask_wildcard = (df['ssid'] == 'Wildcard') if SSID_KEEP_WILDCARD else False
+        mask_known    = ssid_lower.isin(known_lower)
+        df = df[mask_wildcard | mask_known]
+
+    after = len(df)
+    pct = (1 - after / before) * 100 if before > 0 else 0
+    print(f"  Filtro: {before:,} → {after:,} probes ({pct:.0f}% descartados)")
+    return df
+
+
+def estimate_optics_devices(group_df):
+    """Estima número de dispositivos físicos numa janela usando OPTICS clustering."""
+    if group_df.empty:
+        return 0
+
+    df_clean = group_df.dropna(subset=['rssi']).copy()
+    if len(df_clean) < 3:
+        return int(df_clean['mac'].nunique())
+
+    X = df_clean[['timestamp', 'rssi']].values
+    X[:, 0] = pd.to_datetime(X[:, 0]).view('int64') / 10**9
+
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    optics = OPTICS(min_samples=3, xi=0.05, metric='euclidean')
+    labels = optics.fit_predict(X_scaled)
+
+    unique_clusters = set(labels)
+    if -1 in unique_clusters:
+        unique_clusters.remove(-1)
+
+    return len(unique_clusters)
 
 
 # ============================================================
@@ -117,6 +175,8 @@ def extract_features(df, window_minutes=15):
         randomized = sum(1 for m in macs if len(m) > 1 and m[1] in '26aAeE')
         mac_rand_ratio = randomized / len(macs) if len(macs) > 0 else 0
 
+        optics_estimated_devices = estimate_optics_devices(group)
+
         hour = window.hour
         day_of_week = window.weekday()
         is_weekend = 1 if day_of_week >= 5 else 0
@@ -129,6 +189,7 @@ def extract_features(df, window_minutes=15):
             'rssi_std': rssi_std,
             'ssid_diversity': ssid_diversity,
             'mac_randomization_ratio': mac_rand_ratio,
+            'optics_estimated_devices': optics_estimated_devices,
             'hour': hour,
             'day_of_week': day_of_week,
             'is_weekend': is_weekend
@@ -169,7 +230,7 @@ def train_or_load_model(df_features):
                 best_k = k
         except:
             continue
-
+    # replace nisto
     kmeans = KMeans(n_clusters=best_k, random_state=42, n_init=10)
     labels = kmeans.fit_predict(X_scaled)
 
@@ -234,6 +295,7 @@ def init_db():
             rssi_std REAL,
             ssid_diversity INTEGER,
             mac_randomization_ratio REAL,
+            optics_estimated_devices INTEGER,
             hour INTEGER,
             day_of_week INTEGER,
             is_weekend INTEGER,
@@ -254,7 +316,14 @@ def init_db():
         )
     ''')
 
-    conn.commit()
+    # Migração: adicionar optics_estimated_devices se não existir
+    try:
+        c.execute("ALTER TABLE occupancy ADD COLUMN optics_estimated_devices INTEGER")
+        conn.commit()
+        print("Coluna optics_estimated_devices adicionada (migração)")
+    except sqlite3.OperationalError:
+        pass  # coluna já existe
+
     conn.close()
     print("Base de dados inicializada")
 
@@ -267,14 +336,15 @@ def save_to_db(df_results):
 
     for _, row in df_results.iterrows():
         conn.execute('''
-            INSERT OR REPLACE INTO occupancy 
+            INSERT OR REPLACE INTO occupancy
             (window, probe_count, unique_macs, rssi_mean, rssi_std, ssid_diversity,
-             mac_randomization_ratio, hour, day_of_week, is_weekend, cluster, occupancy_label)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             mac_randomization_ratio, optics_estimated_devices, hour, day_of_week, is_weekend, cluster, occupancy_label)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             row['window'].isoformat(), row['probe_count'], row['unique_macs'],
             row['rssi_mean'], row['rssi_std'], row['ssid_diversity'],
-            row['mac_randomization_ratio'], row['hour'], row['day_of_week'],
+            row['mac_randomization_ratio'], int(row['optics_estimated_devices']),
+            row['hour'], row['day_of_week'],
             row['is_weekend'], row['cluster'], row['occupancy_label']
         ))
 
@@ -328,6 +398,11 @@ def main():
     print(f"  {len(df_raw):,} probes extraidos")
 
     df_raw['mac'] = df_raw['mac'].apply(anonymize_mac)
+    
+    df_raw = filter_probes(df_raw)
+    if df_raw.empty:
+        print("Nenhum probe sobrou após filtragem — ajusta os limiares")
+        return
 
     df_features = extract_features(df_raw, WINDOW_MINUTES)
     if df_features.empty:
@@ -359,7 +434,7 @@ def main():
 
     print("\nResumo da ultima janela:")
     last = df_features.iloc[-1]
-    print(f"  {last['window']} -> {last['occupancy_label']} ({last['probe_count']} probes, {last['unique_macs']} MACs)")
+    print(f"  {last['window']} -> {last['occupancy_label']} ({last['probe_count']} probes, {last['unique_macs']} MACs, OPTICS={last['optics_estimated_devices']} devices)")
 
     print("\nPipeline concluido!")
 

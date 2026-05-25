@@ -12,7 +12,7 @@ sudo ip link set wlan1 up
 echo "  OK"
 
 echo "[2/4] Criando diretorios..."
-mkdir -p /home/islab/wifi-occupancy/{data/{raw,db,model},logs}
+mkdir -p /var/wifi-occupancy/{data/{raw,db,model},logs}
 
 echo "[3/4] Iniciando servicos..."
 sudo systemctl start wifi-channel-hop
@@ -27,4 +27,4 @@ sudo systemctl status wifi-dashboard --no-pager
 
 echo ""
 echo "Dashboard: http://$(hostname -I | awk '{print $1}'):8501"
-echo "Logs: tail -f /home/islab/wifi-occupancy/logs/*.log"
+echo "Logs: tail -f /var/wifi-occupancy/logs/*.log"

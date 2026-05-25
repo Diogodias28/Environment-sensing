@@ -10,8 +10,8 @@ echo "============================================"
 
 # 1. Diretorios
 echo "[1/6] Criando diretorios..."
-mkdir -p /home/islab/wifi-occupancy/{data/{raw,db,model},logs,services}
-cd /home/islab/wifi-occupancy
+mkdir -p /var/wifi-occupancy/{data/{raw,db,model},logs,services}
+cd /var/wifi-occupancy
 
 # 2. Dependencias Python
 echo "[2/6] Instalando dependencias Python..."
@@ -19,12 +19,12 @@ pip3 install --user streamlit plotly pandas scikit-learn numpy 2>/dev/null || pi
 
 # 3. Permissoes
 echo "[3/6] Configurando permissoes..."
-chmod +x /home/islab/wifi-occupancy/*.sh
-chmod +x /home/islab/wifi-occupancy/*.py
+chmod +x /var/wifi-occupancy/*.sh
+chmod +x /var/wifi-occupancy/*.py
 
 # 4. Systemd
 echo "[4/6] Instalando servicos systemd..."
-sudo cp /home/islab/wifi-occupancy/services/*.service /home/islab/wifi-occupancy/services/*.timer /etc/systemd/system/
+sudo cp /var/wifi-occupancy/services/*.service /var/wifi-occupancy/services/*.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 
 # 5. Ativar servicos
